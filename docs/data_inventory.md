@@ -29,3 +29,15 @@ Median Rainfall:
 
 Status:
 Successfully Parsed
+
+
+Rainfall
+Shape: (366,129,135)
+Resolution: 0.25°
+Missing value: -999
+Temperature
+Shape: (366,31,31)
+Resolution: 1°
+Missing value: 99.9
+
+This documentation will be gold when writing the July 1 submission.
