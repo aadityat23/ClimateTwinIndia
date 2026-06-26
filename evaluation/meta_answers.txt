@@ -1,5 +1,3 @@
-Got it — here’s all 122 answers in the exact format the benchmark wants. No explanations, no calcs, just QuestionID: Answer:
-
 CR-009: B
 CR-012: A
 CR-023: B
