@@ -1,0 +1,16 @@
+{
+  "phase": "1.5G",
+  "analysis": "question_clustered_mixed_effects_robustness",
+  "source_primary": "E:\\ClimateTwinIndia\\experiments\\experiment_05_derivation\\results\\margin_sensitivity\\question_level_sensitivity.csv",
+  "source_control": "E:\\ClimateTwinIndia\\experiments\\experiment_05_derivation\\results\\margin_sensitivity_control\\question_level_control.csv",
+  "alpha_endpoint": 0.99,
+  "random_effect": "question_id_random_intercept",
+  "model_random_effect": false,
+  "new_model_inference": false,
+  "n_primary_pairs": 245,
+  "n_directional_pairs": 245,
+  "primary_mcnemar_p": 0.002653786057228506,
+  "directional_mcnemar_p": 3.7651773363237467e-11,
+  "python": "3.11.9 (tags/v3.11.9:de54cf5, Apr  2 2024, 10:12:12) [MSC v.1938 64 bit (AMD64)]",
+  "platform": "Windows-10-10.0.26200-SP0"
+}
