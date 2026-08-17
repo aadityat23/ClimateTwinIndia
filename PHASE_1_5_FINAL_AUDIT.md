@@ -176,9 +176,10 @@ Seed:
 Phase 1.5G re-evaluates the frozen endpoints using a binomial
 generalized linear mixed model with a question-level random intercept.
 
-The original paired McNemar analyses remain the primary statistical
-analysis. The mixed-effects models are robustness analyses and do not
-replace the frozen endpoint.
+**Phase 1.5G is a SECONDARY robustness analysis.** The original paired
+McNemar analyses (Phase 1.5D/E/F) remain the primary statistical
+analysis. The mixed-effects models do not replace the frozen endpoint,
+and nothing below changes any Phase 1.5D/E/F number.
 
 ## Baseline → Toward
 
@@ -190,7 +191,8 @@ Mixed-model odds ratio:
 
     1.838698
 
-95% interval:
+Approximate 95% credible interval (mean-field variational-Bayes
+Gaussian posterior approximation):
 
     [1.384961, 2.441086]
 
@@ -212,7 +214,8 @@ Mixed-model odds ratio:
 
     3.843138
 
-95% interval:
+Approximate 95% credible interval (mean-field variational-Bayes
+Gaussian posterior approximation):
 
     [2.877542, 5.132751]
 
@@ -224,46 +227,94 @@ Question random-intercept SD:
 
     0.910654
 
+## Interval terminology
+
+The intervals above are **not** exact posterior credible intervals and
+**not** frequentist confidence intervals. They come from statsmodels'
+mean-field variational-Bayes (VB) Gaussian approximation to the
+posterior of the fixed effect. Mean-field VB approximates the joint
+posterior with independent Gaussian factors, which is a known source of
+understated posterior variance relative to the true (intractable)
+posterior. These intervals should be read as a plausible lower bound on
+posterior uncertainty, not an exact quantification of it. They must not
+be described as confidence intervals in any paper, presentation, or
+external communication.
+
+## Convergence diagnostic note
+
+Fitting this model (`statsmodels.genmod.bayes_mixed_glm.BinomialBayesMixedGLM`,
+`fit_vb(fit_method="BFGS")`) can intermittently raise
+`UserWarning: VB fitting did not converge`. This was traced to
+`scipy.optimize.minimize`'s own `OptimizeResult.success` flag for the
+BFGS backend on this ELBO surface, which can report non-convergence at a
+gradient norm on the order of 1e-7 — close to the requested optimization
+tolerance — even though the objective value and parameter estimates are
+stable. Independent checks across multiple optimizer and random-seed
+combinations (BFGS, L-BFGS-B, Newton-CG) on both endpoints found the
+odds-ratio estimates and ELBO objective stable to several significant
+figures regardless of whether this warning fired.
+
+`phase_1_5g_mixed_effects.py` now seeds the NumPy random state used for
+the VB starting values (`PHASE_1_5G_SEED = 20260626`) immediately before
+each fit, so that whether the warning fires on a given re-run is itself
+deterministic. This seed is independent of, and does not affect, any
+Phase 1.5D/E/F seed (e.g. the Phase 1.5D/E bootstrap seed). Each
+re-run's `phase_1_5g_metadata.json` and `phase_1_5g_report.md` now
+record whether the warning was emitted for each endpoint.
+
+This diagnostic describes optimizer behavior only. It is not a claim
+about, and has no bearing on, the scientific validity of the primary
+McNemar endpoint, which does not depend on this model.
+
 ---
 
-# 6. GPT-OSS-120B label clarification
+# 6. GPT-label clarification
 
-The canonical internal evaluation label:
+The operational label used throughout Phase 1.5 for the model with the
+largest metric-error observation count is:
 
-    gpt
+    the canonical `gpt`-labeled subset
 
-corresponds to:
-
-    GPT-OSS-120B
-
-This mapping is explicitly present in the existing evaluation
-infrastructure:
-
-    "GPT-OSS-120B": "gpt"
-
-and the evaluator also contains the model identifier:
-
-    gpt_oss_120b
+Repository notebooks and narrative documentation (e.g.
+`project_master.md`, `10_derivation_analysis.ipynb`) associate this
+subset with GPT-OSS-120B, and this association is corroborated by a
+small OpenRouter dev-test artifact
+(`results/openai_gpt-oss-120b_free.csv`) whose values match the first
+records of `raw_outputs/gpt.txt` exactly. However, the evaluation
+infrastructure itself (`evaluate_derivation.py`,
+`analyze_margin_sensitivity.py`) also contains a **distinct**
+`gpt_oss_120b` label backed by its own, non-identical raw-output file
+(`raw_outputs/gpt_oss_120b.txt`), and no single generation script or API
+log in `experiment_05_derivation` directly traces `raw_outputs/gpt.txt`
+to a specific API call. The mapping is therefore documented, and
+corroborated by matching numbers across independent artifacts, but is
+not "explicitly present in the evaluation infrastructure" in a strong,
+single-source-of-truth sense — that infrastructure treats `gpt` and
+`gpt_oss_120b` as two separate entities.
 
 The historical `gpt` filename and result label therefore MUST NOT be
-renamed as part of Phase 1.5.
+renamed as part of Phase 1.5, and `gpt_oss_120b` MUST NOT be treated as
+an alias for it.
 
 For interpretation, references to the `gpt` subset in Phase 1.5G should
-be read as the canonical GPT-OSS-120B evaluation label.
+be read as **the canonical `gpt`-labeled subset**, documented elsewhere
+in this repository as corresponding to GPT-OSS-120B, without asserting
+that identity as independently proven by the evaluation infrastructure
+itself.
 
 The error-conditioned population is strongly concentrated in this
-model:
+subset:
 
-    GPT-OSS-120B / gpt = 230 observations
-    DeepSeek          = 14 observations
-    Claude            = 1 observation
+    canonical `gpt`-labeled subset = 230 observations
+    DeepSeek                       = 14 observations
+    Claude                         = 1 observation
 
 Therefore Phase 1.5 must NOT be described as an equally balanced
 five-model robustness experiment.
 
 ---
 
-# 7. GPT-OSS-120B sensitivity check
+# 7. Canonical `gpt`-labeled-subset sensitivity check
 
 The existing Phase 1.5G sensitivity analysis reports:
 
@@ -424,7 +475,7 @@ The primary endpoint is:
     +12.65 pp
     McNemar p = 0.00265
     mixed-model OR = 1.84
-    95% interval = [1.38, 2.44]
+    approx. 95% credible interval (mean-field VB) = [1.38, 2.44]
 
 The directional control is:
 
@@ -432,7 +483,7 @@ The directional control is:
     +27.76 pp
     McNemar p = 3.77e-11
     mixed-model OR = 3.84
-    95% interval = [2.88, 5.13]
+    approx. 95% credible interval (mean-field VB) = [2.88, 5.13]
 
 These findings are interpreted strictly as evidence of deterministic
 directional sensitivity under the specified controlled intervention.

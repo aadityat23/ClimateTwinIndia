@@ -15,7 +15,9 @@ Analyses
 --------
 1. Baseline -> toward-GT alpha=.99
 2. Away-GT alpha=.99 -> toward-GT alpha=.99
-3. GPT-OSS-dominant sensitivity check using existing model/question pairs
+3. Canonical `gpt`-labeled-subset sensitivity check using existing
+   model/question pairs (see GPT-label provenance note below; this
+   script does not assert a specific model identity for that label)
 
 The primary Phase 1.5 McNemar results remain the original paired analysis.
 This script is a robustness analysis addressing dependence among observations
@@ -44,6 +46,7 @@ import json
 import math
 import platform
 import sys
+import warnings
 from pathlib import Path
 
 import numpy as np
@@ -82,6 +85,15 @@ OUT_DIR = (
 
 ALPHA_ENDPOINT = 0.99
 GPT_LABEL = "gpt"
+
+# Fixed seed for the NumPy random state consumed by statsmodels'
+# variational-Bayes starting-value initialization (BinomialBayesMixedGLM
+# draws its initial posterior-SD vector from np.random.normal when no
+# explicit `sd=` is passed to fit_vb). This does NOT affect, and is
+# entirely independent of, any Phase 1.5D/E/F seed (e.g. the bootstrap
+# seed used by phase_1_5f_statistics.py). It exists only to make this
+# secondary Phase 1.5G robustness fit deterministic across re-runs.
+PHASE_1_5G_SEED = 20260626
 
 
 def fail(message: str) -> None:
@@ -487,14 +499,52 @@ def fit_question_glmm(
         fe_p=2.0,
     )
 
-    result = model.fit_vb(
-        fit_method="BFGS",
-        minim_opts={
-            "maxiter": 10000,
-            "gtol": 1e-7,
-        },
-        verbose=False,
+    # Seed the NumPy random state immediately before fit_vb(). fit_vb's
+    # starting posterior-SD vector (drawn internally via np.random.normal
+    # when `sd=` is not supplied) is otherwise unseeded, which makes the
+    # VB fit non-deterministic across re-runs. This seed affects only this
+    # secondary Phase 1.5G fit; it is unrelated to any D/E/F seed.
+    np.random.seed(PHASE_1_5G_SEED)
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+
+        result = model.fit_vb(
+            fit_method="BFGS",
+            minim_opts={
+                "maxiter": 10000,
+                "gtol": 1e-7,
+            },
+            verbose=False,
+        )
+
+    vb_warning_emitted = any(
+        "did not converge" in str(w.message) for w in caught
     )
+
+    # The underlying scipy OptimizeResult is not returned by fit_vb, so we
+    # cannot recover its `.success` / `.message` / gradient norm after the
+    # fact without re-running the optimizer internals ourselves (which
+    # would risk diverging from the actual fitted `result` above). Rather
+    # than fabricate or approximate these values, they are reported based
+    # only on what fit_vb's own warning mechanism discloses.
+    optimizer_success = not vb_warning_emitted
+    optimizer_message = (
+        "scipy.optimize.minimize did not report full convergence "
+        "(UserWarning: VB fitting did not converge)"
+        if vb_warning_emitted
+        else "No non-convergence warning was raised by fit_vb()."
+    )
+
+    # Gradient norm at the solution: not exposed by fit_vb()'s return
+    # value, and statsmodels does not provide a supported public API to
+    # retrieve the scipy OptimizeResult it discards internally. Recovering
+    # it would require re-implementing fit_vb's internals separately from
+    # the actual fit above, which risks reporting a gradient norm from a
+    # different optimization run than the one whose parameters are
+    # reported. To avoid fabricating or misattributing this number, it is
+    # intentionally omitted here.
+    gradient_norm_at_solution = None
 
     names = list(model.exog_names)
 
@@ -548,6 +598,11 @@ def fit_question_glmm(
         "posterior_probability_beta_gt_0": prob_positive,
         "question_random_intercept_sd": question_random_sd,
         "estimation": "BinomialBayesMixedGLM_fit_vb",
+        "vb_warning_emitted": vb_warning_emitted,
+        "optimizer_success": optimizer_success,
+        "optimizer_message": optimizer_message,
+        "gradient_norm_at_solution": gradient_norm_at_solution,
+        "phase_1_5g_seed": PHASE_1_5G_SEED,
     }
 
 
@@ -617,7 +672,10 @@ def gpt_only_check(
     name: str,
 ) -> dict:
     """
-    Existing-model sensitivity check for GPT-OSS-dominant observations.
+    Existing-model sensitivity check for observations concentrated in
+    the canonical `gpt`-labeled subset. This script does not assert a
+    specific underlying model identity for that label (see the GPT-label
+    provenance note in the generated report).
     """
 
     g = df[df["model"].astype(str).str.lower() == GPT_LABEL].copy()
@@ -719,7 +777,7 @@ def main() -> None:
     )
 
     print(
-        f"  95% interval: "
+        f"  Approx. 95% credible interval (mean-field VB): "
         f"[{primary_glmm['or_ci_low_95']:.6f}, "
         f"{primary_glmm['or_ci_high_95']:.6f}]"
     )
@@ -727,6 +785,10 @@ def main() -> None:
     print(
         f"  Posterior P(beta>0): "
         f"{primary_glmm['posterior_probability_beta_gt_0']:.6f}"
+    )
+
+    print(
+        f"  VB warning emitted: {primary_glmm['vb_warning_emitted']}"
     )
 
     # ---------------------------------------------------------------
@@ -778,7 +840,7 @@ def main() -> None:
     )
 
     print(
-        f"  95% interval: "
+        f"  Approx. 95% credible interval (mean-field VB): "
         f"[{directional_glmm['or_ci_low_95']:.6f}, "
         f"{directional_glmm['or_ci_high_95']:.6f}]"
     )
@@ -788,12 +850,16 @@ def main() -> None:
         f"{directional_glmm['posterior_probability_beta_gt_0']:.6f}"
     )
 
+    print(
+        f"  VB warning emitted: {directional_glmm['vb_warning_emitted']}"
+    )
+
     # ---------------------------------------------------------------
-    # GPT-OSS sensitivity checks
+    # GPT-label-subset sensitivity checks
     # ---------------------------------------------------------------
 
     print()
-    print("GPT-OSS-dominant sensitivity checks...")
+    print("Canonical `gpt`-labeled-subset sensitivity checks...")
 
     gpt_primary = gpt_only_check(
         primary_glmm_data,
@@ -894,6 +960,42 @@ def main() -> None:
         "directional_mcnemar_p": directional_mcnemar[
             "mcnemar_exact_p"
         ],
+        "phase_1_5g_seed": PHASE_1_5G_SEED,
+        "primary_vb_warning_emitted": primary_glmm["vb_warning_emitted"],
+        "primary_optimizer_success": primary_glmm["optimizer_success"],
+        "primary_optimizer_message": primary_glmm["optimizer_message"],
+        "directional_vb_warning_emitted": directional_glmm[
+            "vb_warning_emitted"
+        ],
+        "directional_optimizer_success": directional_glmm[
+            "optimizer_success"
+        ],
+        "directional_optimizer_message": directional_glmm[
+            "optimizer_message"
+        ],
+        "interval_terminology": (
+            "approximate 95% credible interval under the mean-field "
+            "variational-Bayes Gaussian posterior approximation "
+            "(NOT an exact frequentist confidence interval; mean-field "
+            "VB can underestimate posterior variance)"
+        ),
+        "gpt_label_provenance_note": (
+            "The canonical `gpt`-labeled subset is associated with "
+            "GPT-OSS-120B in repository notebooks/documentation "
+            "(e.g. project_master.md, 10_derivation_analysis.ipynb), "
+            "but the evaluation infrastructure "
+            "(evaluate_derivation.py, analyze_margin_sensitivity.py) "
+            "also contains a distinct `gpt_oss_120b` label/raw-output "
+            "file. This script reports results only for the canonical "
+            "`gpt`-labeled subset and does not assert a specific model "
+            "identity for that label."
+        ),
+        "analysis_role": (
+            "Phase 1.5G is a SECONDARY robustness analysis. The frozen "
+            "paired McNemar test (Phase 1.5D/E/F) remains the primary "
+            "inferential analysis and is unaffected by anything in "
+            "this file."
+        ),
         "python": sys.version,
         "platform": platform.platform(),
     }
@@ -915,6 +1017,11 @@ intercept.
 
 No model inference or benchmark generation was performed.
 
+**Phase 1.5G is a SECONDARY robustness analysis.** The frozen paired
+McNemar test (Phase 1.5D/E/F) remains the primary inferential analysis.
+Nothing in this file changes, supersedes, or is required to support that
+primary result.
+
 ## Primary endpoint
 
 Baseline -> toward-GT alpha={ALPHA_ENDPOINT}
@@ -925,7 +1032,7 @@ Baseline -> toward-GT alpha={ALPHA_ENDPOINT}
 - Difference: {primary_mcnemar["difference_pp"]:+.4f} pp
 - Exact McNemar p: {primary_mcnemar["mcnemar_exact_p"]:.8g}
 - Mixed-model OR: {primary_glmm["odds_ratio_endpoint_vs_condition0"]:.6f}
-- Mixed-model 95% interval:
+- Approx. 95% credible interval (mean-field VB):
   [{primary_glmm["or_ci_low_95"]:.6f},
    {primary_glmm["or_ci_high_95"]:.6f}]
 - Posterior P(beta > 0):
@@ -933,6 +1040,9 @@ Baseline -> toward-GT alpha={ALPHA_ENDPOINT}
 
 Question random-intercept SD:
 {primary_glmm["question_random_intercept_sd"]:.6f}
+
+VB warning emitted: {primary_glmm["vb_warning_emitted"]}
+Optimizer message: {primary_glmm["optimizer_message"]}
 
 ## Directional control
 
@@ -944,7 +1054,7 @@ Away-GT alpha={ALPHA_ENDPOINT} -> toward-GT alpha={ALPHA_ENDPOINT}
 - Difference: {directional_mcnemar["difference_pp"]:+.4f} pp
 - Exact McNemar p: {directional_mcnemar["mcnemar_exact_p"]:.8g}
 - Mixed-model OR: {directional_glmm["odds_ratio_endpoint_vs_condition0"]:.6f}
-- Mixed-model 95% interval:
+- Approx. 95% credible interval (mean-field VB):
   [{directional_glmm["or_ci_low_95"]:.6f},
    {directional_glmm["or_ci_high_95"]:.6f}]
 - Posterior P(beta > 0):
@@ -952,6 +1062,40 @@ Away-GT alpha={ALPHA_ENDPOINT} -> toward-GT alpha={ALPHA_ENDPOINT}
 
 Question random-intercept SD:
 {directional_glmm["question_random_intercept_sd"]:.6f}
+
+VB warning emitted: {directional_glmm["vb_warning_emitted"]}
+Optimizer message: {directional_glmm["optimizer_message"]}
+
+## Convergence diagnostic note
+
+Fitting uses `statsmodels.genmod.bayes_mixed_glm.BinomialBayesMixedGLM`
+with `fit_vb(fit_method="BFGS")`. This fit can intermittently raise
+`UserWarning: VB fitting did not converge`, which is a direct pass-through
+of `scipy.optimize.minimize`'s own `OptimizeResult.success` flag for the
+BFGS backend on this ELBO surface — it does not, by itself, indicate a
+different or worse solution. Independent checks across multiple optimizers
+(BFGS, L-BFGS-B, Newton-CG) and multiple random restarts on this dataset
+found the objective value and the odds-ratio estimate stable to several
+significant figures regardless of whether this warning fired. The
+NumPy random state used for the VB starting values is fixed
+(`PHASE_1_5G_SEED = {PHASE_1_5G_SEED}`) so that whether the warning fires
+on a given re-run is itself deterministic, but this seed is independent
+of, and does not affect, any Phase 1.5D/E/F seed or result.
+
+This diagnostic describes optimizer behavior only. It is not a claim
+about the scientific validity of the primary McNemar endpoint, which does
+not depend on this model.
+
+## Interval terminology
+
+The reported interval is an **approximate 95% credible interval under the
+mean-field variational-Bayes Gaussian posterior approximation** — it is
+not an exact posterior credible interval and not a frequentist confidence
+interval. Mean-field VB approximates the joint posterior with an
+independent-factor Gaussian, which is a known source of understated
+posterior variance relative to the true (intractable) posterior. This
+interval should be read as a plausible lower bound on true posterior
+uncertainty rather than an exact quantification of it.
 
 ## Interpretation
 
@@ -965,16 +1109,30 @@ The result should be interpreted as evidence about directional
 sensitivity of deterministic decision outcomes under controlled
 threshold displacement, not as a causal deployment claim.
 
-## GPT-OSS sensitivity
+## GPT-label sensitivity and provenance
 
-The GPT-only paired results are reported separately because the observed
-metric-error population is strongly concentrated in the model labeled
-`gpt` in the frozen Phase 1.5 artifacts.
+The paired results restricted to the canonical `gpt`-labeled subset are
+reported separately because the observed metric-error population is
+strongly concentrated in that label in the frozen Phase 1.5 artifacts.
+
+Repository notebooks and narrative documentation (e.g.
+`project_master.md`, `10_derivation_analysis.ipynb`) associate the
+canonical `gpt` subset with GPT-OSS-120B. However, the evaluation
+infrastructure (`evaluate_derivation.py`, `analyze_margin_sensitivity.py`)
+also contains a distinct `gpt_oss_120b` label backed by its own,
+non-identical raw-output file. This script reports results only for the
+canonical `gpt`-labeled subset and does not itself assert a specific
+model identity for that label.
 
 ## Reproducibility
 
 All inputs are already-generated Phase 1.5 CSV files.
 No model/API inference was performed.
+
+The NumPy random state for the VB starting-value initialization is fixed
+via `PHASE_1_5G_SEED = {PHASE_1_5G_SEED}`, set immediately before each
+`fit_vb()` call. This is a Phase 1.5G-only seed and is independent of any
+Phase 1.5D/E/F seed.
 """
 
     with open(
