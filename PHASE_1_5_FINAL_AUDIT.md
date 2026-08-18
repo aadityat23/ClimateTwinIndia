@@ -266,6 +266,10 @@ This diagnostic describes optimizer behavior only. It is not a claim
 about, and has no bearing on, the scientific validity of the primary
 McNemar endpoint, which does not depend on this model.
 
+Full per-run results for this diagnostic are recorded in
+`experiments/experiment_05_derivation/results/phase_1_5g_mixed_effects/phase_1_5g_optimizer_diagnostics.csv`
+and summarized in the accompanying `phase_1_5g_optimizer_diagnostics.md`.
+
 ---
 
 # 6. GPT-label clarification

@@ -77,6 +77,10 @@ This diagnostic describes optimizer behavior only. It is not a claim
 about the scientific validity of the primary McNemar endpoint, which does
 not depend on this model.
 
+Full per-run results for this optimizer/restart diagnostic are recorded
+in `phase_1_5g_optimizer_diagnostics.csv` and summarized in
+`phase_1_5g_optimizer_diagnostics.md`, alongside this file.
+
 ## Interval terminology
 
 The reported interval is an **approximate 95% credible interval under the

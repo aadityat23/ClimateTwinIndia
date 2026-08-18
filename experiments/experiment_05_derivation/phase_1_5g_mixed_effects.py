@@ -522,12 +522,8 @@ def fit_question_glmm(
         "did not converge" in str(w.message) for w in caught
     )
 
-    # The underlying scipy OptimizeResult is not returned by fit_vb, so we
-    # cannot recover its `.success` / `.message` / gradient norm after the
-    # fact without re-running the optimizer internals ourselves (which
-    # would risk diverging from the actual fitted `result` above). Rather
-    # than fabricate or approximate these values, they are reported based
-    # only on what fit_vb's own warning mechanism discloses.
+    # optimizer_success/optimizer_message are derived from fit_vb's own
+    # convergence warning mechanism above.
     optimizer_success = not vb_warning_emitted
     optimizer_message = (
         "scipy.optimize.minimize did not report full convergence "
@@ -536,14 +532,12 @@ def fit_question_glmm(
         else "No non-convergence warning was raised by fit_vb()."
     )
 
-    # Gradient norm at the solution: not exposed by fit_vb()'s return
-    # value, and statsmodels does not provide a supported public API to
-    # retrieve the scipy OptimizeResult it discards internally. Recovering
-    # it would require re-implementing fit_vb's internals separately from
-    # the actual fit above, which risks reporting a gradient norm from a
-    # different optimization run than the one whose parameters are
-    # reported. To avoid fabricating or misattributing this number, it is
-    # intentionally omitted here.
+    # The fitted result exposes the underlying SciPy OptimizeResult
+    # through result.optim_retvals in the tested statsmodels version.
+    # We intentionally do not persist optimizer-specific diagnostics in
+    # the canonical summary artifact here; the optimizer/restart
+    # robustness checks are preserved separately as a secondary
+    # diagnostic artifact.
     gradient_norm_at_solution = None
 
     names = list(model.exog_names)
